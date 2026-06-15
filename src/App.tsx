@@ -5,7 +5,8 @@ import {
   DEFAULT_PORTFOLIO, 
   DEFAULT_SERVICES,
   CATEGORIES,
-  STYLE_FILTERS
+  STYLE_FILTERS,
+  resolveImageSrc
 } from "./data";
 import CmsPanel from "./components/CmsPanel";
 import { 
@@ -48,6 +49,49 @@ import {
 } from "firebase/auth";
 import { doc, onSnapshot, setDoc, deleteDoc, collection } from "firebase/firestore";
 
+// Helper to sanitize dynamic Profile records and enforce optimized local default image fallbacks
+export function getCuredProfile(raw: any): ProfileData {
+  if (!raw) return DEFAULT_PROFILE;
+  const cured = { ...DEFAULT_PROFILE };
+  const keys: (keyof ProfileData)[] = [
+    "name", "title", "location", "phone", "email", "aboutText",
+    "consultationRate", "consultationSub", "heroImage", "profileImage"
+  ];
+  keys.forEach(key => {
+    if (raw[key] !== undefined && raw[key] !== null) {
+      const valStr = String(raw[key]).trim();
+      if (valStr !== "") {
+        if (key === "consultationRate") {
+          const num = Number(raw[key]);
+          cured.consultationRate = isNaN(num) ? 10 : num;
+        } else {
+          cured[key] = raw[key] as any;
+        }
+      }
+    }
+  });
+
+  // Automatically heal slow, broken, or plain Unsplash placeholder urls on the hero image block
+  const isOldSlowHero = !cured.heroImage || 
+                        typeof cured.heroImage !== "string" || 
+                        cured.heroImage.includes("unsplash.com") || 
+                        cured.heroImage.includes("images.unsplash.com");
+  if (isOldSlowHero) {
+    cured.heroImage = DEFAULT_PROFILE.heroImage;
+  }
+
+  // Automatically heal slow, broken, or plain Unsplash placeholder urls on the profile photo block
+  const isOldSlowProfile = !cured.profileImage || 
+                           typeof cured.profileImage !== "string" || 
+                           cured.profileImage.includes("unsplash.com") || 
+                           cured.profileImage.includes("images.unsplash.com");
+  if (isOldSlowProfile) {
+    cured.profileImage = DEFAULT_PROFILE.profileImage;
+  }
+
+  return cured;
+}
+
 export default function App() {
   // --- STATES & PERSISTENCE ---
   const [profile, setProfile] = useState<ProfileData>(() => {
@@ -55,9 +99,7 @@ export default function App() {
     if (cached) {
       try {
         const parsed = JSON.parse(cached);
-        if (parsed.consultationRate === 100 || parsed.consultationRate === "100") parsed.consultationRate = 10;
-        if (parsed.phone === "+23408148778176") parsed.phone = "+2348148778176";
-        return parsed;
+        return getCuredProfile(parsed);
       } catch {
         return DEFAULT_PROFILE;
       }
@@ -118,17 +160,9 @@ export default function App() {
     const profileRef = doc(db, "profiles", "daodu");
     const unsubscribeProfile = onSnapshot(profileRef, (snap) => {
       if (snap.exists()) {
-        const data = snap.data() as ProfileData;
-        setProfile(data);
-        localStorage.setItem("daodu_profile", JSON.stringify(data));
-      } else {
-        const userEmail = auth.currentUser?.email;
-        const isLocAdmin = sessionStorage.getItem("daodu_is_admin") === "true";
-        if (userEmail === ADMIN_EMAIL || isLocAdmin) {
-          setDoc(profileRef, profile).catch(e => {
-            console.warn("Seeding initial profile doc:", e);
-          });
-        }
+        const cleaned = getCuredProfile(snap.data());
+        setProfile(cleaned);
+        localStorage.setItem("daodu_profile", JSON.stringify(cleaned));
       }
     }, (error) => {
       console.warn("Firestore profiles stream custom error: ", error.message);
@@ -137,32 +171,30 @@ export default function App() {
     // 3. Portfolio Sync
     const portfolioCol = collection(db, "portfolio");
     const unsubscribePortfolio = onSnapshot(portfolioCol, (snap) => {
+      const items: PortfolioItem[] = [];
       if (!snap.empty) {
-        const items: PortfolioItem[] = [];
         snap.forEach((doc) => {
           items.push(doc.data() as PortfolioItem);
         });
-        const sorted = items.sort((a, b) => {
-          const aIndex = DEFAULT_PORTFOLIO.findIndex(d => d.id === a.id);
-          const bIndex = DEFAULT_PORTFOLIO.findIndex(d => d.id === b.id);
-          if (aIndex !== -1 && bIndex !== -1) return aIndex - bIndex;
-          if (aIndex !== -1) return -1;
-          if (bIndex !== -1) return 1;
-          return b.id.localeCompare(a.id);
-        });
-        setPortfolio(sorted);
-        localStorage.setItem("daodu_portfolio", JSON.stringify(sorted));
-      } else {
-        const userEmail = auth.currentUser?.email;
-        const isLocAdmin = sessionStorage.getItem("daodu_is_admin") === "true";
-        if (userEmail === ADMIN_EMAIL || isLocAdmin) {
-          portfolio.forEach((item) => {
-            setDoc(doc(db, "portfolio", item.id), item).catch(e => {
-              console.warn("Seeding portfolio item:", item.id, e);
-            });
-          });
-        }
       }
+
+      // To bring back past portfolio samples even if cloud entries were partially altered:
+      // We combine custom items from Firestore and append any DEFAULT_PORTFOLIO items not currently stored
+      const existingIds = new Set(items.map(i => i.id));
+      const missingDefaultItems = DEFAULT_PORTFOLIO.filter(d => !existingIds.has(d.id));
+
+      const combined = [...items, ...missingDefaultItems];
+      const sorted = combined.sort((a, b) => {
+        const aIndex = DEFAULT_PORTFOLIO.findIndex(d => d.id === a.id);
+        const bIndex = DEFAULT_PORTFOLIO.findIndex(d => d.id === b.id);
+        if (aIndex !== -1 && bIndex !== -1) return aIndex - bIndex;
+        if (aIndex !== -1) return -1;
+        if (bIndex !== -1) return 1;
+        return b.id.localeCompare(a.id);
+      });
+
+      setPortfolio(sorted);
+      localStorage.setItem("daodu_portfolio", JSON.stringify(sorted));
     }, (error) => {
       console.warn("Firestore portfolio stream custom error: ", error.message);
     });
@@ -170,30 +202,27 @@ export default function App() {
     // 4. Services Sync
     const servicesCol = collection(db, "services");
     const unsubscribeServices = onSnapshot(servicesCol, (snap) => {
+      const items: ServiceItem[] = [];
       if (!snap.empty) {
-        const items: ServiceItem[] = [];
         snap.forEach((doc) => {
           items.push(doc.data() as ServiceItem);
         });
-        const sorted = items.sort((a, b) => {
-          const aIndex = DEFAULT_SERVICES.findIndex(d => d.id === a.id);
-          const bIndex = DEFAULT_SERVICES.findIndex(d => d.id === b.id);
-          if (aIndex !== -1 && bIndex !== -1) return aIndex - bIndex;
-          return a.id.localeCompare(b.id);
-        });
-        setServices(sorted);
-        localStorage.setItem("daodu_services", JSON.stringify(sorted));
-      } else {
-        const userEmail = auth.currentUser?.email;
-        const isLocAdmin = sessionStorage.getItem("daodu_is_admin") === "true";
-        if (userEmail === ADMIN_EMAIL || isLocAdmin) {
-          services.forEach((srv) => {
-            setDoc(doc(db, "services", srv.id), srv).catch(e => {
-              console.warn("Seeding service item:", srv.id, e);
-            });
-          });
-        }
       }
+
+      // Combine database services with missing default ones to avoid any empty states
+      const existingIds = new Set(items.map(i => i.id));
+      const missingDefaultServices = DEFAULT_SERVICES.filter(d => !existingIds.has(d.id));
+
+      const combined = [...items, ...missingDefaultServices];
+      const sorted = combined.sort((a, b) => {
+        const aIndex = DEFAULT_SERVICES.findIndex(d => d.id === a.id);
+        const bIndex = DEFAULT_SERVICES.findIndex(d => d.id === b.id);
+        if (aIndex !== -1 && bIndex !== -1) return aIndex - bIndex;
+        return a.id.localeCompare(b.id);
+      });
+
+      setServices(sorted);
+      localStorage.setItem("daodu_services", JSON.stringify(sorted));
     }, (error) => {
       console.warn("Firestore services stream custom error: ", error.message);
     });
@@ -411,20 +440,90 @@ export default function App() {
   const [bookingEmail, setBookingEmail] = useState("");
   const [bookingMessage, setBookingMessage] = useState("");
   const [bookingSuccess, setBookingSuccess] = useState(false);
+  const [activeMailtoUrl, setActiveMailtoUrl] = useState("");
 
-  const handleBookingSubmit = (e: React.FormEvent) => {
+  const handleBookingSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!bookingName || !bookingEmail) {
       alert("Please provide a name and email to proceed.");
       return;
     }
+
+    const bookingId = "book-" + Date.now();
+    const payload = {
+      id: bookingId,
+      name: bookingName,
+      email: bookingEmail,
+      date: bookingDate,
+      time: bookingTime,
+      message: bookingMessage || "",
+      createdAt: new Date().toISOString()
+    };
+
+    // 1. Build a beautifully-formatted direct mailto link to the consultant's email address
+    const targetEmail = profile.email || "goodnessdaodu940@gmail.com";
+    const mailtoSubject = `Strategy Consultation Booking: ${bookingName}`;
+    const mailtoBody = 
+      `Hi Goodness,\n\n` +
+      `I've requested a Strategy Consultation session with you. Here are my reservation details:\n\n` +
+      `- Client Name: ${bookingName}\n` +
+      `- Contact Email: ${bookingEmail}\n` +
+      `- Chosen Date: ${bookingDate}\n` +
+      `- Chosen Time Slot: ${bookingTime} (GMT+1)\n\n` +
+      `Additional Background / Project Brief:\n` +
+      `${bookingMessage || "None provided."}\n\n` +
+      `Looking forward to discussing further!`;
+
+    const mailtoUrl = `mailto:${targetEmail}?subject=${encodeURIComponent(mailtoSubject)}&body=${encodeURIComponent(mailtoBody)}`;
+    setActiveMailtoUrl(mailtoUrl);
+
+    // 2. Persist in Firestore for active admin tracking
+    try {
+      await setDoc(doc(db, "consultations", bookingId), payload);
+    } catch (err) {
+      console.error("Firestore booking write warning:", err);
+    }
+
+    // 3. Submit to Netlify forms to trigger automatic email alerting rules
+    try {
+      const encode = (data: Record<string, string>) => {
+        return Object.keys(data)
+          .map(k => encodeURIComponent(k) + "=" + encodeURIComponent(data[k]))
+          .join("&");
+      };
+
+      await fetch("/", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: encode({
+          "form-name": "consultation",
+          "name": bookingName,
+          "email": bookingEmail,
+          "date": bookingDate,
+          "time": bookingTime,
+          "message": bookingMessage || "",
+        })
+      });
+      console.log("Netlify Form submission captured successfully.");
+    } catch (err) {
+      console.error("Netlify Form submission failed:", err);
+    }
+
+    // 4. Trigger direct mailto navigation to open the client's local email app
+    try {
+      window.location.href = mailtoUrl;
+    } catch (err) {
+      console.warn("Direct window.location mailto trigger failed, relying on UI link:", err);
+    }
+
     setBookingSuccess(true);
     setTimeout(() => {
       setBookingSuccess(false);
       setBookingName("");
       setBookingEmail("");
       setBookingMessage("");
-    }, 4500);
+      setActiveMailtoUrl("");
+    }, 15000); // Give plenty of time to view the custom email triggering button
   };
 
   // Quick helper to choose icons dynamically
@@ -439,13 +538,13 @@ export default function App() {
   };
 
   // --- LIGHTNING FAST IMAGE PROGRESSIVE LOADING CHIPS ---
-  const ProgressiveImage = ({ src, alt, className }: { src: string; alt: string; className: string }) => {
+  const ProgressiveImage = ({ src, alt, className, isPriority = false }: { src: string; alt: string; className: string; isPriority?: boolean }) => {
     const [loaded, setLoaded] = useState(false);
-    const [imgSrc, setImgSrc] = useState(src);
+    const [imgSrc, setImgSrc] = useState(() => resolveImageSrc(src));
     const [hasError, setHasError] = useState(false);
 
     useEffect(() => {
-      setImgSrc(src);
+      setImgSrc(resolveImageSrc(src));
       setLoaded(false);
       setHasError(false);
     }, [src]);
@@ -497,7 +596,7 @@ export default function App() {
 
     return (
       <div className="relative overflow-hidden w-full h-full bg-slate-50">
-        {!loaded && (
+        {!loaded && !isPriority && (
           <div className="absolute inset-0 bg-slate-100 flex items-center justify-center animate-pulse">
             <span className="text-[10px] uppercase font-mono tracking-wider text-slate-400">Loading...</span>
           </div>
@@ -510,10 +609,11 @@ export default function App() {
             setHasError(true);
           }}
           className={`${className} transition-all duration-500 ease-out ${
-            loaded ? "opacity-100 scale-100 blur-0" : "opacity-0 scale-105 blur-md"
+            loaded ? "opacity-100 scale-100 blur-0" : isPriority ? "opacity-100 scale-100 blur-0" : "opacity-0 scale-105 blur-md"
           }`}
           referrerPolicy="no-referrer"
-          loading="lazy"
+          loading={isPriority ? "eager" : "lazy"}
+          {...(isPriority ? { fetchPriority: "high" } as any : {})}
         />
       </div>
     );
@@ -616,10 +716,10 @@ export default function App() {
               </div>
 
               {/* Action buttons */}
-              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-4 pt-4">
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 pt-4">
                 <a 
                   href="#portfolio" 
-                  className="px-6 py-3.5 text-xs font-bold hover:font-extrabold tracking-wider uppercase text-white bg-slate-900 hover:bg-slate-800 rounded-xl transition-all shadow-md shadow-slate-900/10 flex items-center justify-center gap-2 group"
+                  className="px-5 py-3 text-xs font-bold hover:font-extrabold tracking-wider uppercase text-white bg-slate-900 hover:bg-slate-800 rounded-xl transition-all shadow-md shadow-slate-900/10 flex items-center justify-center gap-2 group text-center"
                 >
                   <span>Explore Portfolio Grid</span>
                   <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
@@ -627,10 +727,18 @@ export default function App() {
 
                 <a 
                   href="#consultation" 
-                  className="px-6 py-3.5 text-xs font-bold tracking-wider uppercase text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-xl transition-all flex items-center justify-center gap-2"
+                  className="px-5 py-3 text-xs font-bold tracking-wider uppercase text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-xl transition-all flex items-center justify-center gap-2 text-center"
                 >
                   <Calendar className="w-4 h-4 text-sky-500" />
                   <span>Secure Consultation</span>
+                </a>
+
+                <a 
+                  href={`mailto:${profile.email || "goodnessdaodu940@gmail.com"}?subject=Direct%20Design%20Inquiry`}
+                  className="px-5 py-3 text-xs font-bold tracking-wider uppercase text-sky-700 bg-sky-50 hover:bg-sky-100 border border-sky-200 rounded-xl transition-all flex items-center justify-center gap-2 text-center"
+                >
+                  <Mail className="w-4 h-4 animate-bounce-slow" />
+                  <span>Mail Direct</span>
                 </a>
               </div>
 
@@ -649,13 +757,14 @@ export default function App() {
                     src={profile.heroImage} 
                     alt="Creative Studio Showcase" 
                     className="w-full h-full object-cover" 
+                    isPriority={true}
                   />
                   
                   {/* Floating floating card indicating Lagos office */}
                   <div className="absolute bottom-4 left-4 right-4 bg-white/90 backdrop-blur-md p-3.5 rounded-xl border border-white/40 shadow-lg flex items-center justify-between gap-3 animate-fade-in">
                     <div className="flex items-center gap-2.5">
                       <img 
-                        src={profile.profileImage}
+                        src={resolveImageSrc(profile.profileImage)}
                         alt="Goodness Daodu Avatar" 
                         className="w-9 h-9 rounded-full object-cover border border-white shrink-0 bg-slate-200"
                         referrerPolicy="no-referrer"
@@ -1051,23 +1160,72 @@ export default function App() {
             {/* Booking Form Interface Right (7 cols) */}
             <div className="lg:col-span-7 bg-white p-8 sm:p-10 text-left flex flex-col justify-between">
               
-              <form onSubmit={handleBookingSubmit} className="space-y-4">
+              <form 
+                name="consultation" 
+                onSubmit={handleBookingSubmit} 
+                className="space-y-4"
+                data-netlify="true"
+                data-netlify-honeypot="bot-field"
+              >
+                {/* Netlify Forms Hidden Identification and Spambot Honeytop Fields */}
+                <input type="hidden" name="form-name" value="consultation" />
+                <p className="hidden">
+                  <label>Don’t fill this out if you’re human: <input name="bot-field" /></label>
+                </p>
+
                 <h4 className="text-slate-900 font-display font-extrabold text-lg">
                   Submit Reservation Spot
                 </h4>
 
                 {bookingSuccess ? (
-                  <div className="p-6 bg-emerald-50 border border-emerald-100 rounded-xl text-center space-y-3 animate-fade-in/60">
-                    <CheckCircle2 className="w-10 h-10 text-emerald-500 mx-auto" />
-                    <div>
-                      <h4 className="font-display font-bold text-emerald-950 text-sm">Consultation Spot Placed!</h4>
-                      <p className="text-xs text-emerald-700 mt-1 max-w-sm mx-auto">
-                        Thank you! An invite and custom calendar link for {bookingDate} at {bookingTime} has been sent to your inbox.
+                  <div className="p-6 bg-sky-50 border border-sky-100 rounded-xl text-center space-y-4 animate-fade-in/60">
+                    <div className="w-12 h-12 bg-sky-500 rounded-full flex items-center justify-center mx-auto text-white shadow-md">
+                      <Mail className="w-6 h-6 animate-pulse" />
+                    </div>
+                    <div className="space-y-1">
+                      <h4 className="font-display font-black text-sky-950 text-sm">Redirecting to Mail Client...</h4>
+                      <p className="text-xs text-sky-800 leading-relaxed max-w-sm mx-auto">
+                        Your strategy consultation slot for <strong>{bookingDate}</strong> at <strong>{bookingTime}</strong> has been secured in our live database database.
+                      </p>
+                      <p className="text-[11px] text-slate-500 mt-2 max-w-xs mx-auto">
+                        We have automatically launched your local email application to send the reservation detail straight to Goodness at <strong>{profile.email}</strong>.
                       </p>
                     </div>
+
+                    {activeMailtoUrl && (
+                      <div className="pt-2">
+                        <a 
+                          href={activeMailtoUrl}
+                          className="inline-flex items-center gap-2 px-5 py-2.5 bg-sky-600 hover:bg-sky-700 text-white font-bold text-xs tracking-wider uppercase rounded-lg shadow-md hover:shadow-lg transition-all"
+                        >
+                          <Mail className="w-4 h-4" />
+                          <span>Direct Email Compose Link</span>
+                        </a>
+                        <span className="block text-[10px] text-slate-400 mt-2">
+                          If your email client didn't launch automatically, click the link above.
+                        </span>
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <>
+                    {/* Direct Email Short-Circuit Banner */}
+                    <div className="p-4 bg-sky-50 border border-sky-100 rounded-2xl flex flex-col sm:flex-row items-center justify-between gap-3 text-left">
+                      <div className="space-y-0.5">
+                        <p className="text-xs font-bold text-sky-950">Just want to email me straight up?</p>
+                        <p className="text-[10px] text-sky-700 leading-relaxed">
+                          Skips the scheduler and instantly opens your local email application to message me.
+                        </p>
+                      </div>
+                      <a 
+                        href={`mailto:${profile.email || "goodnessdaodu940@gmail.com"}?subject=Project%20Design%20Inquiry`}
+                        className="w-full sm:w-auto shrink-0 px-4 py-2 bg-sky-600 hover:bg-sky-700 text-white font-black text-[10px] tracking-widest uppercase rounded-lg shadow-sm hover:shadow-md transition-all text-center flex items-center justify-center gap-1.5 cursor-pointer"
+                      >
+                        <Mail className="w-3.5 h-3.5" />
+                        <span>Message Direct</span>
+                      </a>
+                    </div>
+
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-1">
                         <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-600">Your Full Name</label>

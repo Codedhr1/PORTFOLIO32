@@ -51,6 +51,21 @@
         "price": { "type": "string" }
       },
       "required": ["id", "title", "description", "iconName", "price"]
+    },
+    "Consultation": {
+      "title": "Consultation",
+      "description": "Professional 1-on-1 strategy booking consultation request",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "date": { "type": "string" },
+        "time": { "type": "string" },
+        "message": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "name", "email", "date", "time", "message"]
     }
   },
   "firestore": {
@@ -65,6 +80,10 @@
     "/services/{serviceId}": {
       "schema": "ServiceItem",
       "description": "Consulting and development service definitions"
+    },
+    "/consultations/{consultationId}": {
+      "schema": "Consultation",
+      "description": "Client contact/coaching bookings"
     }
   }
 }
