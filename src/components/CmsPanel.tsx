@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { PortfolioItem, ProfileData, ServiceItem } from "../types";
 import { 
   X, Save, Trash2, Plus, RefreshCw, Edit, Sparkles, Image, Check, Info, LogOut
@@ -10,15 +10,137 @@ interface CmsPanelProps {
   isOpen: boolean;
   onClose: () => void;
   profileData: ProfileData;
-  onUpdateProfile: (data: ProfileData) => void;
+  onUpdateProfile: (data: ProfileData) => Promise<void> | void;
   portfolioItems: PortfolioItem[];
-  onAddPortfolioItem: (item: PortfolioItem) => void;
-  onDeletePortfolioItem: (id: string) => void;
-  onUpdatePortfolioItem: (item: PortfolioItem) => void;
+  onAddPortfolioItem: (item: PortfolioItem) => Promise<void> | void;
+  onDeletePortfolioItem: (id: string) => Promise<void> | void;
+  onUpdatePortfolioItem: (item: PortfolioItem) => Promise<void> | void;
   services: ServiceItem[];
-  onUpdateService: (service: ServiceItem) => void;
+  onUpdateService: (service: ServiceItem) => Promise<void> | void;
   onReset: () => void;
 }
+
+// Sub-component to manage individual service package editing and avoid saving on every keystroke
+interface ServiceItemFormProps {
+  service: ServiceItem;
+  onUpdateService: (service: ServiceItem) => Promise<void> | void;
+  idx: number;
+}
+
+const ServiceItemForm: React.FC<ServiceItemFormProps> = ({ service, onUpdateService, idx }) => {
+  const [title, setTitle] = useState(service.title);
+  const [price, setPrice] = useState(service.price);
+  const [description, setDescription] = useState(service.description);
+  const [isSaving, setIsSaving] = useState(false);
+  const [isSuccess, setIsSuccess] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  // Sync state if service data resets or updates in back-end snapshot
+  useEffect(() => {
+    setTitle(service.title);
+    setPrice(service.price);
+    setDescription(service.description);
+  }, [service]);
+
+  const handleSave = async () => {
+    setIsSaving(true);
+    setErrorMsg(null);
+    try {
+      await onUpdateService({ ...service, title, price, description });
+      setIsSuccess(true);
+      setTimeout(() => setIsSuccess(false), 2500);
+    } catch (err: any) {
+      console.error("Failed to save service package:", err);
+      try {
+        const parsed = JSON.parse(err.message);
+        setErrorMsg(parsed.error || err.message);
+      } catch {
+        setErrorMsg(err.message || String(err));
+      }
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const hasChanges = title !== service.title || price !== service.price || description !== service.description;
+
+  return (
+    <div className="p-4 border border-slate-200 rounded-lg space-y-3 bg-white shadow-xs">
+      <div className="flex justify-between items-center bg-slate-50 -m-4 mb-3 p-3 rounded-t-lg border-b border-slate-100">
+        <span className="font-display font-bold text-xs uppercase tracking-wider text-slate-500">
+          Service Package {idx + 1}
+        </span>
+        <input 
+          type="text"
+          value={price}
+          onChange={(e) => setPrice(e.target.value)}
+          className="text-right font-display font-black text-xs bg-white border border-slate-200 px-2 py-1 rounded text-slate-900 focus:outline-hidden max-w-[120px] focus:border-slate-400"
+          placeholder="e.g. $100+"
+        />
+      </div>
+
+      <div className="space-y-3 pt-1">
+        <div className="space-y-1">
+          <label className="block text-[10px] font-bold font-mono tracking-wider uppercase text-slate-400">Title</label>
+          <input
+            type="text"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            className="w-full font-display font-semibold text-sm text-slate-950 border border-slate-200 rounded-md px-3 py-1.5 focus:border-slate-400 focus:outline-hidden bg-white"
+            placeholder="Service Title"
+          />
+        </div>
+
+        <div className="space-y-1">
+          <label className="block text-[10px] font-bold font-mono tracking-wider uppercase text-slate-400">Description</label>
+          <textarea
+            rows={2}
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            className="w-full text-xs text-slate-700 border border-slate-200 rounded-md px-3 py-1.5 focus:border-slate-400 focus:outline-hidden bg-white"
+            placeholder="Package Details"
+          />
+        </div>
+      </div>
+
+      {errorMsg && (
+        <div className="text-[10px] font-mono text-red-600 bg-red-50 p-2.5 rounded border border-red-100 leading-relaxed font-semibold">
+          Cloud Write Warning: {errorMsg}
+        </div>
+      )}
+
+      <div className="flex justify-between items-center pt-1">
+        <span className="text-[10px] text-slate-400 italic">
+          {hasChanges ? "Has unsaved edits" : "Synced to cloud"}
+        </span>
+        <button
+          type="button"
+          disabled={isSaving}
+          onClick={handleSave}
+          className={`px-3.5 py-1.5 text-xs font-bold rounded-md transition-all flex items-center gap-1.5 cursor-pointer select-none ${
+            isSuccess 
+              ? "bg-emerald-500 text-white" 
+              : hasChanges 
+                ? "bg-slate-900 hover:bg-slate-800 text-white" 
+                : "bg-slate-100 text-slate-400 cursor-not-allowed"
+          }`}
+        >
+          {isSaving ? (
+            "Saving..."
+          ) : isSuccess ? (
+            <>
+              <Check className="w-3.5 h-3.5" /> Saved!
+            </>
+          ) : (
+            <>
+              <Save className="w-3.5 h-3.5" /> Save Package
+            </>
+          )}
+        </button>
+      </div>
+    </div>
+  );
+};
 
 export default function CmsPanel({
   isOpen,
@@ -38,6 +160,13 @@ export default function CmsPanel({
   // Local state for profile edits
   const [profileForm, setProfileForm] = useState<ProfileData>({ ...profileData });
   const [profileSuccess, setProfileSuccess] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  // Sync profile form when live data updates are received from the cloud database
+  useEffect(() => {
+    setProfileForm({ ...profileData });
+  }, [profileData]);
 
   // Local state for adding portfolio item
   const [newItemTitle, setNewItemTitle] = useState("");
@@ -64,16 +193,33 @@ export default function CmsPanel({
 
   if (!isOpen) return null;
 
-  const handleProfileSave = (e: React.FormEvent) => {
+  const handleProfileSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    onUpdateProfile(profileForm);
-    setProfileSuccess(true);
-    setTimeout(() => setProfileSuccess(false), 2500);
+    setIsSaving(true);
+    setSaveError(null);
+    try {
+      await onUpdateProfile(profileForm);
+      setProfileSuccess(true);
+      setTimeout(() => setProfileSuccess(false), 2500);
+    } catch (err: any) {
+      console.error("Profile save failed:", err);
+      try {
+        const parsed = JSON.parse(err.message);
+        setSaveError(parsed.error || err.message);
+      } catch {
+        setSaveError(err.message || String(err));
+      }
+    } finally {
+      setIsSaving(false);
+    }
   };
 
-  const handleAddItem = (e: React.FormEvent) => {
+  const handleAddItem = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newItemTitle.trim()) return;
+
+    setIsSaving(true);
+    setSaveError(null);
 
     const tagsArr = newItemTags
       .split(",")
@@ -98,20 +244,32 @@ export default function CmsPanel({
       featured: true
     };
 
-    onAddPortfolioItem(newItem);
+    try {
+      await onAddPortfolioItem(newItem);
 
-    // Reset fields
-    setNewItemTitle("");
-    setNewItemTags("");
-    setNewItemUrl("");
-    setNewItemDesc("");
-    setNewItemClient("");
-    setNewItemYear("2026");
-    setNewItemFigmaLink("");
-    setNewItemLiveUrl("");
-    setNewItemLongDesc("");
+      // Reset fields only on successful write
+      setNewItemTitle("");
+      setNewItemTags("");
+      setNewItemUrl("");
+      setNewItemDesc("");
+      setNewItemClient("");
+      setNewItemYear("2026");
+      setNewItemFigmaLink("");
+      setNewItemLiveUrl("");
+      setNewItemLongDesc("");
 
-    alert(`Successfully added "${newItem.title}" to your portfolio!`);
+      alert(`Successfully added "${newItem.title}" to your portfolio!`);
+    } catch (err: any) {
+      console.error("Add item failed:", err);
+      try {
+        const parsed = JSON.parse(err.message);
+        setSaveError(parsed.error || err.message);
+      } catch {
+        setSaveError(err.message || String(err));
+      }
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   return (
@@ -195,6 +353,27 @@ export default function CmsPanel({
 
         {/* Content body */}
         <div className="flex-1 overflow-y-auto p-6 space-y-6">
+          
+          {saveError && (
+            <div className="p-4 bg-red-50 border border-red-200 rounded-xl text-xs text-red-800 space-y-1.5 animate-fade-in shrink-0">
+              <p className="font-semibold flex items-center gap-1.5 text-red-900">
+                <Info className="w-4 h-4 text-red-600" /> Cloud Sync Protection
+              </p>
+              <p className="text-[11px] leading-relaxed opacity-95 text-red-700">
+                Your changes are active locally in your current browser, but they could not be synced permanently to the Firestore cloud database: <code className="bg-red-100/50 px-1 py-0.5 rounded font-mono font-bold text-[10px] break-all">{saveError}</code>.
+              </p>
+              <p className="text-[11px] leading-relaxed text-red-700">
+                To guarantee everyone else can see your changes on any other device, please make sure you open this app in a **New Tab** and sign in using the **Sign in with Google** button (using your administrator email <code className="bg-red-100/50 px-1 rounded font-mono">daodugoodness01@gmail.com</code>).
+              </p>
+              <button 
+                type="button" 
+                onClick={() => setSaveError(null)} 
+                className="text-[10px] font-bold font-mono text-red-600 hover:text-red-800 underline uppercase tracking-wider"
+              >
+                Dismiss Connection Warning
+              </button>
+            </div>
+          )}
           
           {/* PROFILE TAB */}
           {activeTab === "profile" && (
@@ -597,37 +776,12 @@ export default function CmsPanel({
               </div>
 
               {services.map((srv, idx) => (
-                <div key={srv.id} className="p-4 border border-slate-200 rounded-lg space-y-3 bg-white">
-                  <div className="flex justify-between items-center">
-                    <span className="font-display font-medium text-xs font-mono uppercase text-slate-400">
-                      Service Package {idx + 1}
-                    </span>
-                    <input 
-                      type="text"
-                      value={srv.price}
-                      onChange={(e) => onUpdateService({ ...srv, price: e.target.value })}
-                      className="text-right font-display font-bold text-xs bg-slate-100 px-2 py-1 rounded text-slate-900 focus:outline-hidden"
-                      placeholder="e.g. $100+"
-                    />
-                  </div>
-
-                  <div className="space-y-2">
-                    <input
-                      type="text"
-                      value={srv.title}
-                      onChange={(e) => onUpdateService({ ...srv, title: e.target.value })}
-                      className="w-full font-display font-semibold text-sm text-slate-900 border-b border-dashed border-slate-200 focus:border-slate-400 focus:outline-hidden"
-                      placeholder="Service Title"
-                    />
-                    <textarea
-                      rows={2}
-                      value={srv.description}
-                      onChange={(e) => onUpdateService({ ...srv, description: e.target.value })}
-                      className="w-full text-xs text-slate-600 focus:outline-hidden"
-                      placeholder="Package Details"
-                    />
-                  </div>
-                </div>
+                <ServiceItemForm
+                  key={srv.id}
+                  service={srv}
+                  idx={idx}
+                  onUpdateService={onUpdateService}
+                />
               ))}
             </div>
           )}

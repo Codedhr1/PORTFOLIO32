@@ -38,7 +38,14 @@ import {
   handleFirestoreError,
   ADMIN_EMAIL
 } from "./firebase";
-import { signInWithPopup, signOut, onAuthStateChanged, User } from "firebase/auth";
+import { 
+  signInWithPopup, 
+  signOut, 
+  onAuthStateChanged, 
+  User,
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword
+} from "firebase/auth";
 import { doc, onSnapshot, setDoc, deleteDoc, collection } from "firebase/firestore";
 
 export default function App() {
@@ -115,9 +122,13 @@ export default function App() {
         setProfile(data);
         localStorage.setItem("daodu_profile", JSON.stringify(data));
       } else {
-        setDoc(profileRef, profile).catch(e => {
-          console.warn("Seeding initial profile doc:", e);
-        });
+        const userEmail = auth.currentUser?.email;
+        const isLocAdmin = sessionStorage.getItem("daodu_is_admin") === "true";
+        if (userEmail === ADMIN_EMAIL || isLocAdmin) {
+          setDoc(profileRef, profile).catch(e => {
+            console.warn("Seeding initial profile doc:", e);
+          });
+        }
       }
     }, (error) => {
       console.warn("Firestore profiles stream custom error: ", error.message);
@@ -142,11 +153,15 @@ export default function App() {
         setPortfolio(sorted);
         localStorage.setItem("daodu_portfolio", JSON.stringify(sorted));
       } else {
-        portfolio.forEach((item) => {
-          setDoc(doc(db, "portfolio", item.id), item).catch(e => {
-            console.warn("Seeding portfolio item:", item.id, e);
+        const userEmail = auth.currentUser?.email;
+        const isLocAdmin = sessionStorage.getItem("daodu_is_admin") === "true";
+        if (userEmail === ADMIN_EMAIL || isLocAdmin) {
+          portfolio.forEach((item) => {
+            setDoc(doc(db, "portfolio", item.id), item).catch(e => {
+              console.warn("Seeding portfolio item:", item.id, e);
+            });
           });
-        });
+        }
       }
     }, (error) => {
       console.warn("Firestore portfolio stream custom error: ", error.message);
@@ -169,11 +184,15 @@ export default function App() {
         setServices(sorted);
         localStorage.setItem("daodu_services", JSON.stringify(sorted));
       } else {
-        services.forEach((srv) => {
-          setDoc(doc(db, "services", srv.id), srv).catch(e => {
-            console.warn("Seeding service item:", srv.id, e);
+        const userEmail = auth.currentUser?.email;
+        const isLocAdmin = sessionStorage.getItem("daodu_is_admin") === "true";
+        if (userEmail === ADMIN_EMAIL || isLocAdmin) {
+          services.forEach((srv) => {
+            setDoc(doc(db, "services", srv.id), srv).catch(e => {
+              console.warn("Seeding service item:", srv.id, e);
+            });
           });
-        });
+        }
       }
     }, (error) => {
       console.warn("Firestore services stream custom error: ", error.message);
@@ -290,13 +309,47 @@ export default function App() {
     }
   };
 
-  const handlePasswordSubmit = (e: React.FormEvent) => {
+  const handlePasswordSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (passwordInput === "0Ctobers@18") {
-      setIsAdmin(true);
-      sessionStorage.setItem("daodu_is_admin", "true");
-      setShowPasswordModal(false);
-      setCmsOpen(true);
+      try {
+        // Authenticate standard user with Email & Password in Firebase Firestore
+        await signInWithEmailAndPassword(auth, ADMIN_EMAIL, passwordInput);
+        setIsAdmin(true);
+        sessionStorage.setItem("daodu_is_admin", "true");
+        setShowPasswordModal(false);
+        setCmsOpen(true);
+        alert("Authenticated with administrative privileges!");
+      } catch (err: any) {
+        // If they are not found or disabled, let's try to self-register them in their Firebase project!
+        if (err.code === "auth/user-not-found" || err.code === "auth/invalid-credential" || err.code === "auth/wrong-password") {
+          try {
+            await createUserWithEmailAndPassword(auth, ADMIN_EMAIL, passwordInput);
+            setIsAdmin(true);
+            sessionStorage.setItem("daodu_is_admin", "true");
+            setShowPasswordModal(false);
+            setCmsOpen(true);
+            alert("Admin account registered and logged in successfully!");
+          } catch (regErr: any) {
+            console.error("Auto-registration of admin account failed:", regErr);
+            // Fallback: logged in locally, but warn about cloud writes
+            setIsAdmin(true);
+            sessionStorage.setItem("daodu_is_admin", "true");
+            setShowPasswordModal(false);
+            setCmsOpen(true);
+            alert(`Local Admin Session Opened. Note: Firebase email/password registration failed (${regErr.message || regErr}). Please ensure you open this app in a New Tab and use Google Sign-In to sync permanently to the Cloud database.`);
+          }
+        } else if (err.code === "auth/operation-not-allowed") {
+          // If Email/password provider is not enabled in Firebase project consoles, bypass but warn
+          setIsAdmin(true);
+          sessionStorage.setItem("daodu_is_admin", "true");
+          setShowPasswordModal(false);
+          setCmsOpen(true);
+          alert("Local Admin Session Opened. Note: Email/Password provider is disabled in your Firebase Auth console. Please open this app in a New Tab and use 'Sign in with Google' to sync permanently to the Cloud database.");
+        } else {
+          setPasswordError("Authentication Error: " + (err.message || err));
+        }
+      }
     } else {
       setPasswordError("Incorrect Access Key");
     }
