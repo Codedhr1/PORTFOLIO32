@@ -768,6 +768,8 @@ export default function App() {
                         alt="Goodness Daodu Avatar" 
                         className="w-9 h-9 rounded-full object-cover border border-white shrink-0 bg-slate-200"
                         referrerPolicy="no-referrer"
+                        loading="eager"
+                        {...{ fetchPriority: "high" } as any}
                       />
                       <div>
                         <span className="font-display font-extrabold text-xs text-slate-900 block leading-none">
@@ -958,7 +960,7 @@ export default function App() {
           {/* SAMPLES GALLERY GRID */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6" id="portfolio-gallery">
             {filteredCollection.length > 0 ? (
-              filteredCollection.map(item => (
+              filteredCollection.map((item, idx) => (
                 <div 
                   key={item.id}
                   onClick={() => setSelectedProject(item)}
@@ -971,6 +973,7 @@ export default function App() {
                       src={item.imageUrl} 
                       alt={item.title} 
                       className="w-full h-full object-cover group-hover:scale-103 transition-transform duration-500"
+                      isPriority={idx < 3}
                     />
                     
                     {/* Dark gradient layover on hover */}
