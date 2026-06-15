@@ -1,0 +1,70 @@
+{
+  "entities": {
+    "Profile": {
+      "title": "Profile",
+      "description": "User profile data",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "title": { "type": "string" },
+        "location": { "type": "string" },
+        "phone": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "aboutText": { "type": "string" },
+        "consultationRate": { "type": "number" },
+        "consultationSub": { "type": "string" },
+        "heroImage": { "type": "string" },
+        "profileImage": { "type": "string" }
+      },
+      "required": ["name", "title", "location", "phone", "email", "aboutText", "consultationRate", "consultationSub", "heroImage", "profileImage"]
+    },
+    "PortfolioItem": {
+      "title": "PortfolioItem",
+      "description": "A portfolio list item with figma references",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "category": { "type": "string" },
+        "style": { "type": "string" },
+        "tags": { "type": "array" },
+        "imageUrl": { "type": "string" },
+        "description": { "type": "string" },
+        "client": { "type": "string" },
+        "year": { "type": "string" },
+        "featured": { "type": "boolean" },
+        "longDescription": { "type": "string" },
+        "figmaLink": { "type": "string" },
+        "liveUrl": { "type": "string" }
+      },
+      "required": ["id", "title", "category", "style", "tags", "imageUrl", "description", "client", "year", "featured"]
+    },
+    "ServiceItem": {
+      "title": "ServiceItem",
+      "description": "A service package layout info",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "iconName": { "type": "string" },
+        "price": { "type": "string" }
+      },
+      "required": ["id", "title", "description", "iconName", "price"]
+    }
+  },
+  "firestore": {
+    "/profiles/{profileId}": {
+      "schema": "Profile",
+      "description": "Bespoke designer profile information"
+    },
+    "/portfolio/{portfolioId}": {
+      "schema": "PortfolioItem",
+      "description": "Catalog of Figma & Webflow portfolio designs"
+    },
+    "/services/{serviceId}": {
+      "schema": "ServiceItem",
+      "description": "Consulting and development service definitions"
+    }
+  }
+}

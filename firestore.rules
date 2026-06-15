@@ -1,0 +1,100 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isSignedIn() &&
+             request.auth.token.email == "daodugoodness01@gmail.com" &&
+             request.auth.token.email_verified == true;
+    }
+
+    match /profiles/{profileId} {
+      allow read: if true;
+      allow create: if isAdmin() && isValidId(profileId) && isValidProfile(incoming());
+      allow update: if isAdmin() && isValidId(profileId) && isValidProfile(incoming()) && (
+        incoming().diff(existing()).affectedKeys().hasAny(["name", "title", "location", "phone", "email", "aboutText", "consultationRate", "consultationSub", "heroImage", "profileImage"])
+      );
+      allow delete: if isAdmin() && isValidId(profileId);
+
+      function isValidProfile(data) {
+        return data.name is string && data.name.size() > 0 && data.name.size() <= 64 &&
+               data.title is string && data.title.size() > 0 && data.title.size() <= 128 &&
+               data.location is string && data.location.size() > 0 && data.location.size() <= 256 &&
+               data.phone is string && data.phone.size() > 0 && data.phone.size() <= 32 &&
+               data.email is string && data.email.size() > 0 && data.email.size() <= 128 &&
+               data.aboutText is string && data.aboutText.size() > 0 && data.aboutText.size() <= 2048 &&
+               data.consultationRate is number && data.consultationRate >= 0 &&
+               data.consultationSub is string && data.consultationSub.size() > 0 && data.consultationSub.size() <= 256 &&
+               data.heroImage is string && data.heroImage.size() > 0 && data.heroImage.size() <= 1024 &&
+               data.profileImage is string && data.profileImage.size() > 0 && data.profileImage.size() <= 1024 &&
+               data.keys().hasAll(["name", "title", "location", "phone", "email", "aboutText", "consultationRate", "consultationSub", "heroImage", "profileImage"]) &&
+               data.keys().size() == 10;
+      }
+    }
+
+    match /portfolio/{portfolioId} {
+      allow read: if true;
+      allow create: if isAdmin() && isValidId(portfolioId) && isValidPortfolioItem(incoming());
+      allow update: if isAdmin() && isValidId(portfolioId) && isValidPortfolioItem(incoming()) && (
+        incoming().diff(existing()).affectedKeys().hasAny(["title", "category", "style", "tags", "imageUrl", "description", "client", "year", "featured", "longDescription", "figmaLink", "liveUrl"])
+      );
+      allow delete: if isAdmin() && isValidId(portfolioId);
+
+      function isValidPortfolioItem(data) {
+        return data.id is string && data.id.size() > 0 && data.id.size() <= 64 &&
+               data.title is string && data.title.size() > 0 && data.title.size() <= 128 &&
+               data.category is string && data.category.size() > 0 && data.category.size() <= 128 &&
+               data.style is string && data.style.size() > 0 && data.style.size() <= 128 &&
+               data.tags is list && data.tags.size() >= 0 && data.tags.size() <= 20 &&
+               data.imageUrl is string && data.imageUrl.size() > 0 && data.imageUrl.size() <= 1024 &&
+               data.description is string && data.description.size() > 0 && data.description.size() <= 1024 &&
+               data.client is string && data.client.size() > 0 && data.client.size() <= 128 &&
+               data.year is string && data.year.size() > 0 && data.year.size() <= 16 &&
+               data.featured is bool &&
+               (!data.keys().hasAny(["longDescription"]) || (data.longDescription is string && data.longDescription.size() <= 2048)) &&
+               (!data.keys().hasAny(["figmaLink"]) || (data.figmaLink is string && data.figmaLink.size() <= 1024)) &&
+               (!data.keys().hasAny(["liveUrl"]) || (data.liveUrl is string && data.liveUrl.size() <= 1024)) &&
+               data.keys().hasAll(["id", "title", "category", "style", "tags", "imageUrl", "description", "client", "year", "featured"]);
+      }
+    }
+
+    match /services/{serviceId} {
+      allow read: if true;
+      allow create: if isAdmin() && isValidId(serviceId) && isValidServiceItem(incoming());
+      allow update: if isAdmin() && isValidId(serviceId) && isValidServiceItem(incoming()) && (
+        incoming().diff(existing()).affectedKeys().hasAny(["title", "description", "iconName", "price"])
+      );
+      allow delete: if isAdmin() && isValidId(serviceId);
+
+      function isValidServiceItem(data) {
+        return data.id is string && data.id.size() > 0 && data.id.size() <= 64 &&
+               data.title is string && data.title.size() > 0 && data.title.size() <= 128 &&
+               data.description is string && data.description.size() > 0 && data.description.size() <= 1024 &&
+               data.iconName is string && data.iconName.size() > 0 && data.iconName.size() <= 64 &&
+               data.price is string && data.price.size() > 0 && data.price.size() <= 64 &&
+               data.keys().hasAll(["id", "title", "description", "iconName", "price"]) &&
+               data.keys().size() == 5;
+      }
+    }
+  }
+}
